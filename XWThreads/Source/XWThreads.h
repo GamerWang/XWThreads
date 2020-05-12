@@ -11,6 +11,7 @@
 #include <vector>
 #include <thread>
 #include <queue>
+#include <future>
 
 //-------------------------------------------------------------------------------
 
@@ -26,10 +27,19 @@ public:
 		stop();
 	}
 
-	void enqueue(Task task) {
+	template<class T>
+	auto enqueue(T task) ->std::future<decltype(task())>
+	{
+		auto wrapper = std::make_shared<std::packaged_task<decltype(task())()>>(std::move(task));
 		{
 			std::unique_lock<std::mutex> lock(mEventMutex);
+			mTasks.emplace([=] {
+				(*wrapper)();
+			});
 		}
+
+		mEventVar.notify_one();
+		return wrapper->get_future();
 	}
 
 private:
@@ -45,13 +55,22 @@ private:
 		for (auto i = 0u; i < numThreads; i++) {
 			mThreads.emplace_back([=] {
 				while (true) {
-					std::unique_lock<std::mutex> lock(mEventMutex);
+					Task task;
 
-					mEventVar.wait(lock, [=] {return mStopping; });
+					{
+						std::unique_lock<std::mutex> lock(mEventMutex);
 
-					if (mStopping) {
-						break;
+						mEventVar.wait(lock, [=] {return mStopping || !mTasks.empty(); });
+
+						if (mStopping && mTasks.empty()) {
+							break;
+						}
+
+						task = std::move(mTasks.front());
+						mTasks.pop();
 					}
+
+					task();
 				}
 			});
 		}
