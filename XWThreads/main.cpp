@@ -30,15 +30,15 @@ auto funcTest4 = [] {
 int main()
 {
 	{
+		ThreadPool pool{ 2 };
+		//ThreadPool pool(12);
 
-		XWThreadPool pool{ 2 };
-
-		XWTask* x = new XWTask();
+		Task* x = new Task();
 		x->taskFunc = funcTest1();
 		
-		XWTask* xChild1 = new XWTask();
+		Task* xChild1 = new Task();
 		xChild1->taskFunc = funcTest3;
-		XWTask* xChild2 = new XWTask();
+		Task* xChild2 = new Task();
 		xChild2->taskFunc = funcTest4;
 
 		AddTaskToList(xChild1, x->children);
@@ -48,9 +48,11 @@ int main()
 		pool.addTask(funcTest2());
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		pool.start(XW_THREADPOOL_MAIN_EXECUTE);
-		//std::cout << "Main thread function execute" << std::endl;
-		pool.~XWThreadPool();
+		pool.start();
+		pool.holdMain(XW_THREADPOOL_MAIN_WAIT);
+		std::cout << "Main thread function execute" << std::endl;
+		//std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		pool.~ThreadPool();
 	}
 	
 	return 0;
