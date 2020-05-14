@@ -13,64 +13,145 @@
 #include <queue>
 #include <future>
 
+#include <iostream>
+
 //-------------------------------------------------------------------------------
+
+#define XW_THREADPOOL_MAIN_EXECUTE true
+#define XW_THREADPOOL_MAIN_WAIT false
+
+//-------------------------------------------------------------------------------
+
+struct XWTask {
+
+	std::function<void()> taskFunc;
+	//void* user_data;
+
+	XWTask* prev = NULL;
+	XWTask* next = NULL;
+	
+	XWTask* children = NULL;
+	
+	void Remove() {
+		while (children != NULL) {
+			XWTask* c = children->next;
+			delete(children);
+			children = c;
+		}
+	}
+};
+
+void AddTaskToList(XWTask* task, XWTask*& queue) {
+	if (task != NULL) {
+		task->prev = NULL;
+		task->next = queue;
+		if (queue != NULL) {
+			queue->prev = task;
+		}
+		queue = task;
+	}
+}
 
 class XWThreadPool {
 public:
 	using Task = std::function<void()>;
 
 	explicit XWThreadPool(std::size_t numThreads) {
-		start(numThreads);
+		initialize(numThreads);
 	}
 
 	~XWThreadPool() {
 		stop();
 	}
 
-	template<class T>
-	auto enqueue(T task) ->std::future<decltype(task())>
-	{
-		auto wrapper = std::make_shared<std::packaged_task<decltype(task())()>>(std::move(task));
+	void start(bool executeMain) {
 		{
-			std::unique_lock<std::mutex> lock(mEventMutex);
-			mTasks.emplace([=] {
-				(*wrapper)();
-			});
+			std::unique_lock<std::mutex> lock(mExecuteMutex);
+			mStart = true;
 		}
+		mExecuteVar.notify_all();
 
-		mEventVar.notify_one();
-		return wrapper->get_future();
+		for (auto &thread : mThreads) {
+			if (executeMain) {
+				thread.detach();
+			}
+			else {
+				thread.join();
+			}
+		}
+	}
+
+	template<class T>
+	void addTask(T task) {
+		std::unique_lock<std::mutex> lock(mTaskMutex);
+		XWTask* newTask = new XWTask();
+		newTask->taskFunc = task;
+		AddTaskToList(newTask, taskList);
+	}
+
+	void addTask(XWTask* task) {
+		std::unique_lock<std::mutex> lock(mTaskMutex);
+		AddTaskToList(task, taskList);
 	}
 
 private:
 	std::vector<std::thread> mThreads;
-	std::queue<Task> mTasks;
+	XWTask* taskList;
 
-	std::condition_variable mEventVar;
-	std::mutex mEventMutex;
+	std::condition_variable mExecuteVar;
+	std::mutex mExecuteMutex;
+	std::condition_variable mTaskVar;
+	std::mutex mTaskMutex;
+
+	bool mStart = false;
 	bool mStopping = false;
 
-
-	void start(std::size_t numThreads) {
+	void initialize(std::size_t numThreads) {
 		for (auto i = 0u; i < numThreads; i++) {
 			mThreads.emplace_back([=] {
 				while (true) {
-					Task task;
+					std::unique_lock<std::mutex> executeLock(mExecuteMutex);
+					mExecuteVar.wait(executeLock, [=]() {return mStart || mStopping; });
 
+					if (mStopping) {
+						break;
+					}
+
+					XWTask* currentTask;
 					{
-						std::unique_lock<std::mutex> lock(mEventMutex);
+						std::unique_lock<std::mutex> taskLock(mTaskMutex);
+						mTaskVar.wait(taskLock, [=]() {return taskList != NULL || mStopping; });
 
-						mEventVar.wait(lock, [=] {return mStopping || !mTasks.empty(); });
-
-						if (mStopping && mTasks.empty()) {
+						if (mStopping) {
 							break;
 						}
 
-						task = std::move(mTasks.front());
-						mTasks.pop();
+						currentTask = taskList;
+						taskList = currentTask->next;
+						if (taskList != NULL) {
+							taskList->prev = NULL;
+						}
+						currentTask->next = NULL;
+					}
+					
+					currentTask->taskFunc();
+
+					XWTask* currentChild = currentTask->children;
+					XWTask* nextChild = NULL;
+					while (currentChild != NULL) {
+						nextChild = currentChild->next;
+						addTask(currentChild);
+						currentChild = nextChild;
 					}
 
-					task();
+					delete(currentTask);
+					
+					if (taskList == NULL) {
+						// it seems better to have another lock here
+						mStopping = true;
+						mTaskVar.notify_all();
+						break;
+					}
 				}
 			});
 		}
@@ -78,14 +159,19 @@ private:
 
 	void stop() noexcept {
 		{
-			std::unique_lock<std::mutex> lock(mEventMutex);
+			std::unique_lock<std::mutex> executeLock(mExecuteMutex);
 			mStopping = true;
 		}
 
-		mEventVar.notify_all();
+		mExecuteVar.notify_all();
+		mTaskVar.notify_all();
 
-		for (auto &thread : mThreads) {
-			thread.join();
+		while (taskList != NULL) {
+			std::unique_lock<std::mutex> taskLock(mTaskMutex);
+			XWTask* t = taskList->next;
+			taskList->Remove();
+			delete(taskList);
+			taskList = t;
 		}
 	}
 };
