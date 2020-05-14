@@ -1,8 +1,9 @@
 #include <iostream>
+#include <chrono>
 
 #include "Source/XWThreads.h"
 
-#include <chrono>
+using namespace XW;
 
 // test tasks
 class funcTest1 {
@@ -50,16 +51,6 @@ int main()
 		pool.start(XW_THREADPOOL_MAIN_EXECUTE);
 		//std::cout << "Main thread function execute" << std::endl;
 		pool.~XWThreadPool();
-
-		//auto f1 = pool.enqueue([] {
-		//	return 1;
-		//});
-
-		//auto f2 = pool.enqueue([] {
-		//	return 2;
-		//});
-
-		//std::cout << (f1.get() + f2.get()) << std::endl;
 	}
 	
 	return 0;

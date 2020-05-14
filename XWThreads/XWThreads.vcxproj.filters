@@ -26,5 +26,8 @@
     <ClInclude Include="Source\XWThreads.h">
       <Filter>Source Files\XWLibrary</Filter>
     </ClInclude>
+    <ClInclude Include="Source\XWFunction.h">
+      <Filter>Source Files\XWLibrary</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
