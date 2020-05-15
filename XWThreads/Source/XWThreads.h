@@ -99,10 +99,10 @@ private:
 	std::mutex mTaskMutex;					//!< Locks threads when add & get tasks
 	std::condition_variable mTaskVar;		//!< & hold thread when task list empty
 
-	std::mutex mDoneMutex;
+	std::mutex mDoneMutex;					//!< Locks threads when writing mThreadDone
 
-	std::mutex mWorkingMutex;
-	int runningThreads = 0;
+	std::mutex mWorkingMutex;				//!< Locks threads when counting runningThreads
+	int runningThreads = 0;					//!< running threads counter
 
 	std::once_flag mStopFlag;				//!< stop when no task can be ger from list
 
