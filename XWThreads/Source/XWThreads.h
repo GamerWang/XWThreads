@@ -41,6 +41,7 @@ struct Task {
 	void Remove() {
 		while (children != NULL) {
 			Task* c = children->next;
+			children->Remove();
 			delete(children);
 			children = c;
 		}
