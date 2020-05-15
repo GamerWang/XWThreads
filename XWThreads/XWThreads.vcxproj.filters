@@ -16,11 +16,9 @@
     <Filter Include="Source Files\XWLibrary">
       <UniqueIdentifier>{4aef9116-4c64-4bc4-a79f-c6fabfbed84c}</UniqueIdentifier>
     </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
+    <Filter Include="Source Files\Demo">
+      <UniqueIdentifier>{43bdedd3-52c8-4147-9741-6121b886fd1a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\XWThreads.h">
@@ -29,5 +27,10 @@
     <ClInclude Include="Source\XWFunction.h">
       <Filter>Source Files\XWLibrary</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files\Demo</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

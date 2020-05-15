@@ -11,8 +11,6 @@
 #include <thread>
 #include <queue>
 
-#include <iostream>
-
 //-------------------------------------------------------------------------------
 
 #include "XWFunction.h"
@@ -101,6 +99,11 @@ private:
 	std::mutex mTaskMutex;					//!< Locks threads when add & get tasks
 	std::condition_variable mTaskVar;		//!< & hold thread when task list empty
 
+	std::mutex mDoneMutex;
+
+	std::mutex mWorkingMutex;
+	int runningThreads = 0;
+
 	std::once_flag mStopFlag;				//!< stop when no task can be ger from list
 
 	bool mStart = false;
@@ -121,14 +124,14 @@ private:
 // Implementation of ThreadPool
 //-------------------------------------------------------------------------------
 
-inline void ThreadPool::holdMain(MainExecute executable) {
+void ThreadPool::holdMain(MainExecute executable) {
 	if (!executable) {
 		std::unique_lock<std::mutex> lock(mExecuteMutex);
 		mExecuteVar.wait(lock, [=]() {return mStopping; });
 	}
 }
 
-inline void ThreadPool::start() {
+void ThreadPool::start() {
 	{
 		std::unique_lock<std::mutex> lock(mExecuteMutex);
 		mStart = true;
@@ -137,7 +140,7 @@ inline void ThreadPool::start() {
 }
 
 template<typename T>
-inline void ThreadPool::addTask(T task) {
+void ThreadPool::addTask(T task) {
 	std::unique_lock<std::mutex> lock(mTaskMutex);
 	Task* newTask = new Task();
 	newTask->taskFunc = task;
@@ -145,13 +148,15 @@ inline void ThreadPool::addTask(T task) {
 	mTaskVar.notify_all();
 }
 
-inline void ThreadPool::addTask(Task* task) {
+void ThreadPool::addTask(Task* task) {
 	std::unique_lock<std::mutex> lock(mTaskMutex);
 	AddTaskToList(task, taskList);
 	mTaskVar.notify_all();
 }
 
-inline void ThreadPool::initialize(std::size_t numThreads) {
+void ThreadPool::initialize(std::size_t numThreads) {
+	runningThreads = 0;
+
 	mThreads.clear();
 	mThreadDone.clear();
 	mThreads.reserve(numThreads);
@@ -159,21 +164,27 @@ inline void ThreadPool::initialize(std::size_t numThreads) {
 	for (auto i = 0u; i < numThreads; i++) {
 		mThreadDone.emplace_back(false);
 		mThreads.emplace_back([=] {
-			while (true) {
+			
+			{
 				std::unique_lock<std::mutex> executeLock(mExecuteMutex);
 				mExecuteVar.wait(executeLock, [=]() {return mStart || mStopping; });
+			}
 
-				if (mStopping) {
-					break;
-				}
-
+			while (true) {
 				Task* currentTask;
+				
 				{
 					std::unique_lock<std::mutex> taskLock(mTaskMutex);
 					mTaskVar.wait(taskLock, [=]() {return taskList != NULL || mStopping; });
 
 					if (mStopping) {
 						break;
+					}
+
+					{
+						mWorkingMutex.lock();
+						runningThreads++;
+						mWorkingMutex.unlock();
 					}
 
 					currentTask = taskList;
@@ -196,17 +207,32 @@ inline void ThreadPool::initialize(std::size_t numThreads) {
 
 				delete(currentTask);
 
-				if (taskList == NULL) {
-					std::call_once(mStopFlag, [&]() {
-						mStopping = true;
-						mTaskVar.notify_all();
-					});
-					break;
+				{	
+					mWorkingMutex.lock();
+					runningThreads--;
+					mWorkingMutex.unlock();
+				}
+
+				{
+					mWorkingMutex.lock();
+					if (taskList == NULL && runningThreads <= 0) {
+						mWorkingMutex.unlock();
+						std::call_once(mStopFlag, [&]() {
+							mStopping = true;
+							mTaskVar.notify_all();
+						});
+						break;
+					}
+					mWorkingMutex.unlock();
 				}
 			}
-			mThreadDone[i] = true;
-			if (allThreadsDone()) {
-				mExecuteVar.notify_all();
+
+			{
+				std::unique_lock<std::mutex> doneLock(mDoneMutex);
+				mThreadDone[i] = true;
+				if (allThreadsDone()) {
+					mExecuteVar.notify_all();
+				}
 			}
 		});
 	}
@@ -215,7 +241,7 @@ inline void ThreadPool::initialize(std::size_t numThreads) {
 	}
 }
 
-inline void ThreadPool::stop() noexcept {
+void ThreadPool::stop() noexcept {
 	{
 		std::unique_lock<std::mutex> executeLock(mExecuteMutex);
 		mStopping = true;
@@ -223,6 +249,13 @@ inline void ThreadPool::stop() noexcept {
 
 	mExecuteVar.notify_all();
 	mTaskVar.notify_all();
+
+	{
+		std::unique_lock<std::mutex> doneLock(mDoneMutex);
+		if (allThreadsDone()) {
+			mExecuteVar.notify_all();
+		}
+	}
 
 	while (taskList != NULL) {
 		std::unique_lock<std::mutex> taskLock(mTaskMutex);
@@ -233,7 +266,7 @@ inline void ThreadPool::stop() noexcept {
 	}
 }
 
-inline bool ThreadPool::allThreadsDone() {
+bool ThreadPool::allThreadsDone() {
 	bool done = true;
 	if (!mThreadDone.empty()) {
 		for (auto t : mThreadDone) {
